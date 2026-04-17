@@ -1,5 +1,5 @@
 """
-db_seeder.py - Pushes initial state to the Locker Pi via MQTT
+initialize_database_dictionaries.py - Pushes initial state to the Locker Pi via MQTT
 """
 
 import json
@@ -16,7 +16,9 @@ AWS_ENDPOINT  = os.getenv("LOCKER_AWS_ENDPOINT",  "a3cym5dx6wtyuv-ats.iot.us-eas
 CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/locker_code/certs/locker-pi-001.cert.pem")
 KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/locker_code/certs/locker-pi-001.private.key")
 CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/locker_code/certs/AmazonRootCA1.pem")
-CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-pi-001") # Different ID so it doesn't clash with the Pi
+
+# Ensure the main locker script is STOPPED when running this to avoid Client ID conflicts
+CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-pi-001") 
 
 def main():
     print("Connecting to AWS IoT...")
@@ -34,7 +36,6 @@ def main():
     print("Connected!\n")
 
     # 1. Format the date: January 1st of the current year at noon.
-    # Matches the '%Y-%m-%d %H:%M:%S' format expected by the main script.
     current_year = datetime.now().year
     reg_date = f"{current_year}-01-01 12:00:00"
 
@@ -48,11 +49,13 @@ def main():
     }
     
     print(f"Publishing USER_UPDATE for {user_payload['name']}...")
-    connection.publish(
+    # FIX: Unpack the tuple returned by publish() before calling .result()
+    publish_future, packet_id = connection.publish(
         topic="users/db/update",
         payload=json.dumps(user_payload),
         qos=mqtt.QoS.AT_LEAST_ONCE
-    ).result()
+    )
+    publish_future.result()
 
 
     # 3. Upload Locker Data
@@ -67,12 +70,14 @@ def main():
         }
         
         print(f"Publishing LOCKER_UPDATE to activate {locker_id}...")
-        connection.publish(
+        # FIX: Unpack the tuple here as well
+        publish_future, packet_id = connection.publish(
             topic="lockers/db/update",
             payload=json.dumps(locker_payload),
             qos=mqtt.QoS.AT_LEAST_ONCE
-        ).result()
-        time.sleep(0.5) # Give the Pi a brief moment to process each message
+        )
+        publish_future.result()
+        time.sleep(0.5) # Give the backend a brief moment to process each message
 
     print("\nAll placeholder values pushed successfully.")
     
