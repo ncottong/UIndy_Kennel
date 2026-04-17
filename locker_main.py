@@ -118,7 +118,7 @@ temp_locker_dict: dict = {
     }
 }
 
-locker_status_dict = {temp_locker_dict, locker_status_dict}
+locker_status_dict = temp_locker_dict | locker_status_dict
 
 locker_status_lock = threading.Lock()
 
