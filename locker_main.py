@@ -100,8 +100,24 @@ locker_status_dict: dict = {
             "Entry Date": None,
         },
     }
-    for i in range(1, 25)
+    for i in range(2, 25)
 }
+
+temp_user_dict: dict = {
+    "Locker 1": {
+        "Admin Unlocked": False,
+        "Door Shut":      True,
+        "Active":         True,
+        "Occupied":       True,
+        "Occupant": {
+            "Name":       "Noah Cottongim",
+            "Card ID":    1902565315657405,
+            "Email":      "cottongimn@uindy.edu",
+            "Entry Date": "1776-07-04 12:00:00",
+        },
+    }
+}
+
 locker_status_lock = threading.Lock()
 
 # ── registered_user_dict (outline §General Information) ───────────────────────
