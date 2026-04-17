@@ -524,15 +524,14 @@ def read_card_reader() -> "str | None":
         return None
 
 def validate_card(raw: str) -> "str | None":
-    if len(raw) != 18: 
-        print(f"[CARD] Invalid length ({len(raw)}). Expected 18.")
+    if len(raw) != 16: 
+        print(f"[CARD] Invalid length ({len(raw)}). Expected 16.")
         return None
-    middle = raw[1:17]
-    if not middle.isdigit(): 
-        print(f"[CARD] Invalid format. Middle 16 chars must be digits.")
+    if not raw.isdigit(): 
+        print(f"[CARD] Invalid format. Chars must be digits.")
         return None
-    print(f"[CARD] ✅ Validated Card ID: {middle}")
-    return middle
+    print(f"[CARD] ✅ Validated Card ID: {raw}")
+    return raw
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UNLOCK SEQUENCE
