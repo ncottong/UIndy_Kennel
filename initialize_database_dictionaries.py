@@ -28,12 +28,15 @@ def main():
         pri_key_filepath=KEY_PATH, 
         ca_filepath=CA_PATH,
         client_id=CLIENT_ID, 
-        clean_session=True, 
+        clean_session=False,  # FIX: Set to False to match previous session states
         keep_alive_secs=30
     )
     
     connection.connect().result()
     print("Connected!\n")
+    
+    # FIX: Wait a moment for the AWS session resumption to fully settle before blasting messages
+    time.sleep(2)
 
     # 1. Format the date: January 1st of the current year at noon.
     current_year = datetime.now().year
@@ -49,7 +52,6 @@ def main():
     }
     
     print(f"Publishing USER_UPDATE for {user_payload['name']}...")
-    # FIX: Unpack the tuple returned by publish() before calling .result()
     publish_future, packet_id = connection.publish(
         topic="users/db/update",
         payload=json.dumps(user_payload),
@@ -70,7 +72,6 @@ def main():
         }
         
         print(f"Publishing LOCKER_UPDATE to activate {locker_id}...")
-        # FIX: Unpack the tuple here as well
         publish_future, packet_id = connection.publish(
             topic="lockers/db/update",
             payload=json.dumps(locker_payload),
