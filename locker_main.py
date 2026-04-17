@@ -103,7 +103,7 @@ locker_status_dict: dict = {
     for i in range(2, 25)
 }
 
-temp_user_dict: dict = {
+temp_locker_dict: dict = {
     "Locker 1": {
         "Admin Unlocked": False,
         "Door Shut":      True,
@@ -117,6 +117,8 @@ temp_user_dict: dict = {
         },
     }
 }
+
+locker_status_dict = temp_locker_dict+locker_status_dict
 
 locker_status_lock = threading.Lock()
 
