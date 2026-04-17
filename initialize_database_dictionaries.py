@@ -16,7 +16,7 @@ AWS_ENDPOINT  = os.getenv("LOCKER_AWS_ENDPOINT",  "a3cym5dx6wtyuv-ats.iot.us-eas
 CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/locker_code/certs/locker-pi-001.cert.pem")
 KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/locker_code/certs/locker-pi-001.private.key")
 CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/locker_code/certs/AmazonRootCA1.pem")
-CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-db-seeder") # Different ID so it doesn't clash with the Pi
+CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-pi-001") # Different ID so it doesn't clash with the Pi
 
 def main():
     print("Connecting to AWS IoT...")
