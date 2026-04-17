@@ -40,6 +40,7 @@ MQTT_RETRY_SECONDS        = 30
 # HARDWARE CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 def _build_hardware_dict() -> dict:
+    print("[INIT] Building hardware mapping dictionary...")
     hw = {}
     board_bus     = {0: 1,    1: 2,    2: 3}
     board_address = {0: 0x20, 1: 0x21, 2: 0x22}
@@ -86,7 +87,6 @@ mqtt_ready        = threading.Event()
 mqtt_publish_lock = threading.Lock()
 
 # ── locker_status_dict (outline §General Information) ─────────────────────────
-# All 24 lockers start inactive / unoccupied per outline.
 locker_status_dict: dict = {
     f"Locker {i}": {
         "Admin Unlocked": False,
@@ -100,36 +100,12 @@ locker_status_dict: dict = {
             "Entry Date": None,
         },
     }
-    for i in range(2, 25)
+    for i in range(1, 25)
 }
-
-temp_locker_dict: dict = {
-    "Locker 1": {
-        "Admin Unlocked": False,
-        "Door Shut":      True,
-        "Active":         True,
-        "Occupied":       True,
-        "Occupant": {
-            "Name":       "Noah Cottongim",
-            "Card ID":    1902565315657405,
-            "Email":      "cottongimn@uindy.edu",
-            "Entry Date": "1776-07-04 12:00:00",
-        },
-    }
-}
-
-locker_status_dict = temp_locker_dict | locker_status_dict
-
 locker_status_lock = threading.Lock()
 
 # ── registered_user_dict (outline §General Information) ───────────────────────
-registered_user_dict: dict = {
-    "Noah Cottongim": {
-        "Card ID": 1902565315657405,
-        "Email": "cottongimn@uindy.edu",
-        "Registration Time": "1776-07-04 12:00:00"
-    }
-}
+registered_user_dict: dict = {}
 user_dict_lock = threading.Lock()
 
 # ── Locker cache ──────────────────────────────────────────────────────────────
@@ -162,13 +138,15 @@ def get_board(locker_id: str) -> "CH423Board | None":
     bus_num = hw["Bus"]
     with _boards_lock:
         if bus_num not in _boards:
+            print(f"[HW] Attempting to init CH423 board on I2C bus {bus_num} for {locker_id}...")
             try:
                 board = CH423Board(bus_num)
                 board.begin(gpio_mode=df_module.DFRobot_CH423.eINPUT,
                             gpo_mode=df_module.DFRobot_CH423.ePUSH_PULL)
                 _boards[bus_num] = board
+                print(f"[HW] ✅ Successfully initialized CH423 on bus {bus_num}")
             except Exception as exc:
-                print(f"[HW] Failed to init CH423 on bus {bus_num}: {exc}")
+                print(f"[HW] ❌ Failed to init CH423 on bus {bus_num}: {exc}")
                 return None
         return _boards[bus_num]
 
@@ -176,18 +154,20 @@ def get_board(locker_id: str) -> "CH423Board | None":
 # LOCKER CONTROL FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 def unlock_locker(locker_id: str):
+    print(f"[HW] 🔓 Unlocking {locker_id} latch")
     board = get_board(locker_id)
     if board:
         pin = _pin_int(LOCKER_HARDWARE[locker_id]["Latch Pin"])
         try: board.gpo_digital_write(pin, 1)
-        except Exception: pass
+        except Exception as e: print(f"[HW] Error unlocking {locker_id}: {e}")
 
 def lock_locker(locker_id: str):
+    print(f"[HW] 🔒 Locking {locker_id} latch")
     board = get_board(locker_id)
     if board:
         pin = _pin_int(LOCKER_HARDWARE[locker_id]["Latch Pin"])
         try: board.gpo_digital_write(pin, 0)
-        except Exception: pass
+        except Exception as e: print(f"[HW] Error locking {locker_id}: {e}")
 
 def _set_light(locker_id: str, on: bool):
     board = get_board(locker_id)
@@ -249,6 +229,7 @@ def is_locker_available() -> "str | bool":
 # CACHE OPERATIONS
 # ─────────────────────────────────────────────────────────────────────────────
 def cache_initialize():
+    print("[CACHE] Analyzing lockers to build FIFO cache...")
     with locker_status_lock:
         available = [
             lid for lid, status in locker_status_dict.items()
@@ -275,12 +256,12 @@ def cache_add(locker_id: str, prev_user: "str | None",
             "Previous User Card ID":  prev_card_id,
             "Previous User Email":    prev_email,
         })
-    print(f"[CACHE] Added {locker_id} to end")
+    print(f"[CACHE] Added {locker_id} to end of available cache")
 
 def cache_remove(locker_id: str):
     with cache_lock:
         locker_cache[:] = [e for e in locker_cache if e["Locker ID"] != locker_id]
-    print(f"[CACHE] Removed {locker_id}")
+    print(f"[CACHE] Removed {locker_id} from available cache")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -295,7 +276,10 @@ def utc_now_iso() -> str:
 # MQTT
 # ─────────────────────────────────────────────────────────────────────────────
 def publish_event(locker_id: str, event_type: str, card_id: str = "", extra: dict = None):
-    if mqtt_conn is None or not mqtt_ready.is_set(): return
+    if mqtt_conn is None or not mqtt_ready.is_set(): 
+        print(f"[MQTT] ⚠️ Cannot publish {event_type} - MQTT not ready")
+        return
+        
     with locker_status_lock:
         status = locker_status_dict.get(locker_id, {})
         occupied  = status.get("Occupied", False)
@@ -317,11 +301,13 @@ def publish_event(locker_id: str, event_type: str, card_id: str = "", extra: dic
     try:
         with mqtt_publish_lock:
             mqtt_conn.publish(topic=topic, payload=json.dumps(payload), qos=mqtt.QoS.AT_LEAST_ONCE)
-        print(f"[MQTT] → {topic} | {event_type}")
-    except Exception as exc: pass
+        print(f"[MQTT] 📤 Published: {topic} | Event: {event_type}")
+    except Exception as exc: 
+        print(f"[MQTT] ❌ Publish error: {exc}")
 
 def publish_unregistered(card_id: str):
     if mqtt_conn is None or not mqtt_ready.is_set(): return
+    print(f"[MQTT] 📤 Publishing UNREGISTERED_USER_CARD_ID for {card_id}")
     payload = {
         "eventType":  "UNREGISTERED_USER_CARD_ID",
         "cardId":     card_id,
@@ -337,19 +323,24 @@ def on_cloud_command(topic, payload, **kwargs):
     try:
         msg        = json.loads(payload.decode() if isinstance(payload, bytes) else payload)
         event_type = msg.get("eventType", msg.get("event", "")).strip().upper()
+        
+        print(f"[MQTT] 📥 Received on {topic}: {event_type}")
 
         if event_type in ("ADMIN_UNLOCK", "UNLOCK", "OPEN"):
+            print(f"[MQTT] Admin unlock requested for {msg.get('lockerId')}")
             _handle_admin_unlock(msg.get("lockerId", ""), msg.get("requestedBy") or msg.get("userId") or "ADMIN")
         elif event_type == "USER_UPDATE":
             _handle_user_update(msg)
         elif event_type == "LOCKER_UPDATE":
             _handle_locker_update(msg)
     except Exception as exc:
-        print(f"[MQTT] on_cloud_command error: {exc}")
+        print(f"[MQTT] ❌ on_cloud_command error: {exc}")
 
 def _handle_admin_unlock(locker_id: str, actor: str):
     with locker_status_lock:
-        if locker_id not in locker_status_dict or not locker_status_dict[locker_id].get("Active"): return
+        if locker_id not in locker_status_dict or not locker_status_dict[locker_id].get("Active"): 
+            print(f"[SYS] Ignored admin unlock for {locker_id} (Not active or doesn't exist)")
+            return
     threading.Thread(target=_admin_unlock_sequence, args=(locker_id,), daemon=True).start()
 
 def _handle_user_update(msg: dict):
@@ -358,8 +349,11 @@ def _handle_user_update(msg: dict):
     email    = msg.get("email",   "").strip().lower()
     reg_date = msg.get("registrationDate", now_str())
 
-    if not name or not card_id or not email: return
+    if not name or not card_id or not email: 
+        print(f"[SYNC] Ignored invalid USER_UPDATE payload")
+        return
 
+    print(f"[SYNC] Updating local memory for user: {name}")
     with user_dict_lock:
         for existing_name, info in list(registered_user_dict.items()):
             if info.get("Email", "").lower() == email:
@@ -376,6 +370,7 @@ def _handle_locker_update(msg: dict):
     locker_id = msg.get("lockerId", "")
     if locker_id not in locker_status_dict: return
 
+    print(f"[SYNC] Updating local memory for locker: {locker_id}")
     with locker_status_lock:
         status       = locker_status_dict[locker_id]
         was_occupied = status.get("Occupied", False)
@@ -406,13 +401,16 @@ def _handle_locker_update(msg: dict):
     apply_hardware_state(locker_id)
 
 def on_connection_interrupted(connection, error, **kwargs):
+    print(f"[MQTT] ⚠️ Connection interrupted: {error}")
     mqtt_ready.clear()
 
 def on_connection_resumed(connection, return_code, session_present, **kwargs):
+    print(f"[MQTT] ✅ Connection resumed (session: {session_present})")
     mqtt_ready.set()
 
 def connect_mqtt():
     global mqtt_conn
+    print(f"[MQTT] Connecting to AWS endpoint {AWS_ENDPOINT}...")
     connection = mqtt_connection_builder.mtls_from_path(
         endpoint=AWS_ENDPOINT, cert_filepath=CERT_PATH, pri_key_filepath=KEY_PATH, ca_filepath=CA_PATH,
         client_id=CLIENT_ID, clean_session=False, keep_alive_secs=30,
@@ -421,7 +419,9 @@ def connect_mqtt():
     connection.connect().result()
     mqtt_conn = connection
     mqtt_ready.set()
+    print("[MQTT] ✅ Connected successfully")
 
+    print("[MQTT] Subscribing to command and update topics...")
     for i in range(1, 25):
         topic = f"lockers/Locker_{i}/cmd"
         mqtt_conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_cloud_command)
@@ -429,14 +429,15 @@ def connect_mqtt():
         mqtt_conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE, callback=on_cloud_command)
 
     _mqtt_publish_raw(f"lockers/pi/{CLIENT_ID}/status", {"eventType": "STARTUP", "piClientId": CLIENT_ID, "timestamp": utc_now_iso()})
-    print("[MQTT] Connected")
 
 def request_db_sync():
     """Request the cloud/DB to push down all current user and locker states."""
-    print("[SYNC] Requesting database state over MQTT...")
+    print("[SYNC] 📤 Requesting database state over MQTT...")
     _mqtt_publish_raw(f"lockers/pi/{CLIENT_ID}/status", {"eventType": "SYNC_REQUEST", "piClientId": CLIENT_ID})
-    # Wait a moment for incoming payloads to populate dictionaries
+    
+    print("[SYNC] Waiting 3 seconds for database to respond...")
     time.sleep(3)
+    print("[SYNC] Database wait period complete.")
 
 def _mqtt_publish_raw(topic: str, payload: dict):
     if mqtt_conn is None or not mqtt_ready.is_set(): return
@@ -446,13 +447,17 @@ def _mqtt_publish_raw(topic: str, payload: dict):
     except Exception: pass
 
 def mqtt_maintainer_loop():
+    print("[SYS] MQTT Maintainer thread started.")
     while True:
         if mqtt_conn is None:
             try: connect_mqtt()
-            except Exception: mqtt_ready.clear()
+            except Exception as e: 
+                print(f"[MQTT] Connection retry failed: {e}")
+                mqtt_ready.clear()
         time.sleep(MQTT_RETRY_SECONDS)
 
 def heartbeat_loop():
+    print("[SYS] Heartbeat thread started.")
     while True:
         time.sleep(HEARTBEAT_SECONDS)
         _mqtt_publish_raw(f"lockers/pi/{CLIENT_ID}/status", {"eventType": "HEARTBEAT", "piClientId": CLIENT_ID, "timestamp": utc_now_iso()})
@@ -461,11 +466,13 @@ def heartbeat_loop():
 # OPEN-DOOR MONITOR 
 # ─────────────────────────────────────────────────────────────────────────────
 def open_door_monitor():
+    print("[SYS] Open-door monitor thread started.")
     while True:
         time.sleep(0.5)
         with open_door_lock: snapshot = set(open_door_lockers)
         for lid in snapshot:
             if is_door_closed(lid):
+                print(f"[SYS] Detected {lid} door was manually closed.")
                 with locker_status_lock: locker_status_dict[lid]["Door Shut"] = True
                 with open_door_lock: open_door_lockers.discard(lid)
                 apply_hardware_state(lid)
@@ -490,7 +497,11 @@ def decode_card_key(keycode) -> str:
     return ""
 
 def wait_for_card_reader():
-    while not Path(HID_DEVICE).exists(): time.sleep(CARD_RETRY_SECONDS)
+    if not Path(HID_DEVICE).exists():
+        print(f"[HW] ⚠️ Waiting for USB card reader at {HID_DEVICE}...")
+        
+    while not Path(HID_DEVICE).exists(): 
+        time.sleep(CARD_RETRY_SECONDS)
 
 def read_card_reader() -> "str | None":
     if not Path(HID_DEVICE).exists():
@@ -501,40 +512,54 @@ def read_card_reader() -> "str | None":
         for event in device.read_loop():
             if event.type != ecodes.EV_KEY: continue
             data = categorize(event)
-            if data.keystate != 1: continue
+            if data.keystate != 1: continue # Only process key down
             ch = decode_card_key(data.keycode)
-            if ch == "\n": return raw if raw else None
+            if ch == "\n": 
+                print(f"[CARD] Raw input received: '{raw}'")
+                return raw if raw else None
             if ch: raw += ch
-    except Exception:
+    except Exception as e:
+        print(f"[CARD] ❌ Reader error: {e}")
         time.sleep(CARD_RETRY_SECONDS)
         return None
 
 def validate_card(raw: str) -> "str | None":
-    if len(raw) != 18: return None
+    if len(raw) != 18: 
+        print(f"[CARD] Invalid length ({len(raw)}). Expected 18.")
+        return None
     middle = raw[1:17]
-    if not middle.isdigit(): return None
+    if not middle.isdigit(): 
+        print(f"[CARD] Invalid format. Middle 16 chars must be digits.")
+        return None
+    print(f"[CARD] ✅ Validated Card ID: {middle}")
     return middle
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UNLOCK SEQUENCE
 # ─────────────────────────────────────────────────────────────────────────────
 def unlock_sequence(locker_id: str, card_id: str, user_name: str, was_occupied: bool) -> bool:
+    print(f"[SYS] Starting unlock sequence for {locker_id} (User: {user_name})")
     op_lock = locker_op_locks[locker_id]
-    if not op_lock.acquire(blocking=False): return False
+    if not op_lock.acquire(blocking=False): 
+        print(f"[SYS] {locker_id} is currently busy, aborting unlock sequence.")
+        return False
 
     try:
         unlock_locker(locker_id)
         publish_event(locker_id, "UNLOCK_STARTED", card_id)
 
+        print(f"[SYS] {locker_id} unlocked. Waiting {UNLOCK_WINDOW_SECONDS}s for user to open door...")
         start, door_opened = time.time(), False
         while time.time() - start < UNLOCK_WINDOW_SECONDS:
             blink_light(locker_id, time.time() - start)
             if not is_door_closed(locker_id):
                 door_opened = True
+                print(f"[SYS] {locker_id} door was OPENED.")
                 break
             time.sleep(0.05)
 
         if not door_opened:
+            print(f"[SYS] {locker_id} door was NOT OPENED. Timing out.")
             lock_locker(locker_id)
             apply_hardware_state(locker_id)
             publish_event(locker_id, "UNLOCK_TIMEOUT", card_id)
@@ -543,6 +568,7 @@ def unlock_sequence(locker_id: str, card_id: str, user_name: str, was_occupied: 
         publish_event(locker_id, "DOOR_OPENED", card_id)
 
         if was_occupied:
+            print(f"[SYS] {locker_id} is being released by {user_name}.")
             with locker_status_lock:
                 status = locker_status_dict[locker_id]
                 prev_email = status["Occupant"].get("Email")
@@ -554,6 +580,7 @@ def unlock_sequence(locker_id: str, card_id: str, user_name: str, was_occupied: 
             cache_add(locker_id, user_name, card_id, user_email)
             _set_light(locker_id, False)
         else:
+            print(f"[SYS] {locker_id} is being assigned to {user_name}.")
             with user_dict_lock:
                 user_email = registered_user_dict.get(user_name, {}).get("Email")
             with locker_status_lock:
@@ -564,10 +591,12 @@ def unlock_sequence(locker_id: str, card_id: str, user_name: str, was_occupied: 
             cache_remove(locker_id)
             _set_light(locker_id, True)
 
+        print(f"[SYS] Waiting {DOOR_CLOSE_WINDOW_SECONDS}s for {locker_id} door to close...")
         close_start, door_closed = time.time(), False
         while time.time() - close_start < DOOR_CLOSE_WINDOW_SECONDS:
             if is_door_closed(locker_id):
                 door_closed = True
+                print(f"[SYS] {locker_id} door was CLOSED.")
                 break
             time.sleep(0.05)
 
@@ -575,15 +604,18 @@ def unlock_sequence(locker_id: str, card_id: str, user_name: str, was_occupied: 
         with locker_status_lock:
             locker_status_dict[locker_id]["Door Shut"] = door_closed
             if not door_closed:
+                print(f"[SYS] ⚠️ {locker_id} door was left OPEN. Adding to monitor queue.")
                 with open_door_lock: open_door_lockers.add(locker_id)
 
         publish_event(locker_id, "RELEASED" if was_occupied else "ASSIGNED" if door_closed else "DOOR_LEFT_OPEN", card_id)
         return True
 
     finally:
+        print(f"[SYS] Finished unlock sequence for {locker_id}.")
         op_lock.release()
 
 def _admin_unlock_sequence(locker_id: str):
+    print(f"[SYS] Starting ADMIN unlock sequence for {locker_id}")
     op_lock = locker_op_locks[locker_id]
     if not op_lock.acquire(blocking=False): return
 
@@ -591,15 +623,18 @@ def _admin_unlock_sequence(locker_id: str):
         unlock_locker(locker_id)
         publish_event(locker_id, "ADMIN_UNLOCK_STARTED")
 
+        print(f"[SYS] {locker_id} admin unlocked. Waiting {UNLOCK_WINDOW_SECONDS}s for door to open...")
         start, door_opened = time.time(), False
         while time.time() - start < UNLOCK_WINDOW_SECONDS:
             blink_light(locker_id, time.time() - start)
             if not is_door_closed(locker_id):
                 door_opened = True
+                print(f"[SYS] {locker_id} door OPENED by admin.")
                 break
             time.sleep(0.05)
 
         if not door_opened:
+            print(f"[SYS] Admin unlock for {locker_id} timed out.")
             lock_locker(locker_id)
             apply_hardware_state(locker_id)
             publish_event(locker_id, "ADMIN_UNLOCK_TIMEOUT")
@@ -614,14 +649,17 @@ def _admin_unlock_sequence(locker_id: str):
                 status["Occupant"] = {"Name": None, "Card ID": None, "Email": None, "Entry Date": None}
 
         if occupied:
+            print(f"[SYS] Admin forcefully released {locker_id}.")
             cache_add(locker_id, prev_name, prev_cid, prev_email)
             _set_light(locker_id, False)
             publish_event(locker_id, "ADMIN_RELEASED", prev_cid or "")
 
+        print(f"[SYS] Waiting {DOOR_CLOSE_WINDOW_SECONDS}s for admin to close {locker_id}...")
         close_start, door_closed = time.time(), False
         while time.time() - close_start < DOOR_CLOSE_WINDOW_SECONDS:
             if is_door_closed(locker_id):
                 door_closed = True
+                print(f"[SYS] {locker_id} door CLOSED by admin.")
                 break
             time.sleep(0.05)
 
@@ -642,31 +680,45 @@ def check_locker_status_updates():
         pending_admin = [lid for lid, s in locker_status_dict.items() if s.get("Active") and s.get("Admin Unlocked")]
         for lid in pending_admin: locker_status_dict[lid]["Admin Unlocked"] = False
     for lid in pending_admin:
+        print(f"[SYS] Triggering pending admin unlock for {lid}")
         threading.Thread(target=_admin_unlock_sequence, args=(lid,), daemon=True).start()
 
 def handle_card_swipe(card_id: str):
+    print(f"[SYS] Processing swipe for Card ID: {card_id}")
     user_name = is_card_registered(card_id)
+    
     if not user_name:
+        print(f"[SYS] User is UNREGISTERED.")
         publish_unregistered(card_id)
         return
+        
+    print(f"[SYS] Hello, {user_name}!")
     assigned_locker = is_card_assigned(card_id)
+    
     if assigned_locker:
+        print(f"[SYS] User already has {assigned_locker} assigned. Triggering release flow.")
         unlock_sequence(assigned_locker, card_id, user_name, was_occupied=True)
     else:
         available_locker = is_locker_available()
         if not available_locker:
+            print(f"[SYS] ❌ No lockers available to assign.")
             publish_event("SYSTEM", "NO_LOCKER_AVAILABLE", card_id)
             return
+        print(f"[SYS] Assigning new locker: {available_locker}")
         unlock_sequence(available_locker, card_id, user_name, was_occupied=False)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
+    print("==========================================")
+    print("   STARTING PI LOCKER CONTROLLER")
+    print("==========================================\n")
+    
     # Setup MQTT and request full DB Sync first thing
     threading.Thread(target=mqtt_maintainer_loop, daemon=True).start()
     
-    # Wait until MQTT is connected before sending the sync request
+    print("[MAIN] Waiting for MQTT connection to establish...")
     while not mqtt_ready.is_set(): time.sleep(0.5)
     
     request_db_sync()
@@ -675,6 +727,7 @@ def main():
     cache_initialize()
 
     # Initialise CH423 boards for every active locker
+    print("[MAIN] Applying hardware states to active lockers...")
     with locker_status_lock:
         active_lids = [lid for lid, s in locker_status_dict.items() if s.get("Active")]
     for lid in active_lids:
@@ -689,6 +742,9 @@ def main():
     threading.Thread(target=heartbeat_loop,       daemon=True).start()
     threading.Thread(target=open_door_monitor,    daemon=True).start()
 
+    print("\n[MAIN] Initialization Complete!")
+    print("[MAIN] Entering main event loop. Waiting for card swipes...\n")
+
     try:
         while True:
             try:
@@ -700,11 +756,14 @@ def main():
                 if card_id is None: continue
                 handle_card_swipe(card_id)
             except Exception as exc:
+                print(f"[MAIN] ❌ Error in main loop: {exc}")
                 time.sleep(1)
 
     except KeyboardInterrupt:
+        print("\n[MAIN] Keyboard interrupt received. Shutting down...")
         pass
     finally:
+        print("[MAIN] Securing all active lockers before exit...")
         with locker_status_lock:
             all_active = [lid for lid, s in locker_status_dict.items() if s.get("Active")]
         for lid in all_active:
