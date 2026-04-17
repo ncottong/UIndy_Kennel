@@ -105,7 +105,13 @@ locker_status_dict: dict = {
 locker_status_lock = threading.Lock()
 
 # ── registered_user_dict (outline §General Information) ───────────────────────
-registered_user_dict: dict = {}
+registered_user_dict: dict = {
+    "Noah Cottongim": {
+        "Card ID": 1902565315657405,
+        "Email": "cottongimn@uindy.edu",
+        "Registration Time": "1776-07-04 12:00:00"
+    }
+}
 user_dict_lock = threading.Lock()
 
 # ── Locker cache ──────────────────────────────────────────────────────────────
