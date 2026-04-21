@@ -13,9 +13,9 @@ from awsiot import mqtt_connection_builder
 # CONFIG (Matches your pi_locker_main.py environment)
 # ─────────────────────────────────────────────────────────────────────────────
 AWS_ENDPOINT  = os.getenv("LOCKER_AWS_ENDPOINT",  "a3cym5dx6wtyuv-ats.iot.us-east-2.amazonaws.com")
-CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/locker_code/certs/locker-pi-001.cert.pem")
-KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/locker_code/certs/locker-pi-001.private.key")
-CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/locker_code/certs/AmazonRootCA1.pem")
+CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/certs/locker-pi-001.cert.pem")
+KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/certs/locker-pi-001.private.key")
+CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/certs/AmazonRootCA1.pem")
 
 # Ensure the main locker script is STOPPED when running this to avoid Client ID conflicts
 CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-pi-001") 
