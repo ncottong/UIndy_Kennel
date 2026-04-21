@@ -23,9 +23,9 @@ import DFRobot_CH423 as df_module
 # CONFIG 
 # ─────────────────────────────────────────────────────────────────────────────
 AWS_ENDPOINT  = os.getenv("LOCKER_AWS_ENDPOINT",  "a3cym5dx6wtyuv-ats.iot.us-east-2.amazonaws.com")
-CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/locker_code/certs/locker-pi-001.cert.pem")
-KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/locker_code/certs/locker-pi-001.private.key")
-CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/locker_code/certs/AmazonRootCA1.pem")
+CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/certs/locker-pi-001.cert.pem")
+KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/certs/locker-pi-001.private.key")
+CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/certs/AmazonRootCA1.pem")
 CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-pi-001")
 HID_DEVICE    = os.getenv("LOCKER_HID_DEVICE",    "/dev/input/by-id/usb-EFFON-RD_EFFON-event-kbd")
 
