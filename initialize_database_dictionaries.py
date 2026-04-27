@@ -6,8 +6,46 @@ import json
 import os
 import time
 from datetime import datetime
-from awscrt import mqtt
-from awsiot import mqtt_connection_builder
+from pathlib import Path
+
+
+def _load_env_file() -> None:
+    for candidate in (Path(__file__).with_name("locker_pi.env"), Path(__file__).with_name(".env")):
+        if not candidate.exists():
+            continue
+        for raw_line in candidate.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+        break
+
+
+_load_env_file()
+
+MISSING_RUNTIME_DEPS: list[str] = []
+
+try:
+    from awscrt import mqtt
+except ModuleNotFoundError:
+    mqtt = None
+    MISSING_RUNTIME_DEPS.append("awscrt")
+
+try:
+    from awsiot import mqtt_connection_builder
+except ModuleNotFoundError:
+    mqtt_connection_builder = None
+    MISSING_RUNTIME_DEPS.append("awsiot")
+
+
+def ensure_runtime_dependencies():
+    if MISSING_RUNTIME_DEPS:
+        names = ", ".join(MISSING_RUNTIME_DEPS)
+        raise RuntimeError(
+            "Missing runtime dependencies: "
+            f"{names}. Install the AWS IoT SDK packages before running initialize_database_dictionaries.py."
+        )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG (Matches your pi_locker_main.py environment)
@@ -21,6 +59,7 @@ CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/certs/Amazo
 CLIENT_ID     = os.getenv("LOCKER_CLIENT_ID",     "locker-pi-001") 
 
 def main():
+    ensure_runtime_dependencies()
     print("Connecting to AWS IoT...")
     connection = mqtt_connection_builder.mtls_from_path(
         endpoint=AWS_ENDPOINT, 

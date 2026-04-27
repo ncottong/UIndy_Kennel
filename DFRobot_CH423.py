@@ -18,7 +18,10 @@ from __future__ import print_function
 
 import sys
 import time
-import smbus
+try:
+  import smbus
+except ModuleNotFoundError:
+  smbus = None
 
 class DFRobot_CH423:
   ## Set system parameter command 
@@ -122,6 +125,8 @@ class DFRobot_CH423:
   ARGS_BIT_SLEEP  = 6
 
   def __init__(self):
+    if smbus is None:
+      raise RuntimeError("Missing runtime dependency: smbus")
     self._bus       = smbus.SMBus(1)
     self._args      = 0
     self._mode      = [0]*8

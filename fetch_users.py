@@ -5,16 +5,53 @@ fetch_users.py - Requests and prints all registered users from the Database
 import json
 import os
 import time
-from awscrt import mqtt
-from awsiot import mqtt_connection_builder
+from pathlib import Path
+
+
+def _load_env_file() -> None:
+    for candidate in (Path(__file__).with_name("locker_pi.env"), Path(__file__).with_name(".env")):
+        if not candidate.exists():
+            continue
+        for raw_line in candidate.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+        break
+
+
+_load_env_file()
+
+MISSING_RUNTIME_DEPS: list[str] = []
+
+try:
+    from awscrt import mqtt
+except ModuleNotFoundError:
+    mqtt = None
+    MISSING_RUNTIME_DEPS.append("awscrt")
+
+try:
+    from awsiot import mqtt_connection_builder
+except ModuleNotFoundError:
+    mqtt_connection_builder = None
+    MISSING_RUNTIME_DEPS.append("awsiot")
+
+
+def ensure_runtime_dependencies():
+    if MISSING_RUNTIME_DEPS:
+        names = ", ".join(MISSING_RUNTIME_DEPS)
+        raise RuntimeError(
+            f"Missing runtime dependencies: {names}. Install the AWS IoT SDK packages before running fetch_users.py."
+        )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 AWS_ENDPOINT  = os.getenv("LOCKER_AWS_ENDPOINT",  "a3cym5dx6wtyuv-ats.iot.us-east-2.amazonaws.com")
-CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/locker_code/certs/locker-pi-001.cert.pem")
-KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/locker_code/certs/locker-pi-001.private.key")
-CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/locker_code/certs/AmazonRootCA1.pem")
+CERT_PATH     = os.getenv("LOCKER_CERT_PATH",     "/home/uindykennel/certs/locker-pi-001.cert.pem")
+KEY_PATH      = os.getenv("LOCKER_KEY_PATH",      "/home/uindykennel/certs/locker-pi-001.private.key")
+CA_PATH       = os.getenv("LOCKER_CA_PATH",       "/home/uindykennel/certs/AmazonRootCA1.pem")
 
 # Must match the Pi's allowed Client ID. 
 # Make sure locker_main.py is NOT running!
@@ -45,6 +82,7 @@ def on_user_received(topic, payload, **kwargs):
 # MAIN SCRIPT
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
+    ensure_runtime_dependencies()
     print("Connecting to AWS IoT...")
     connection = mqtt_connection_builder.mtls_from_path(
         endpoint=AWS_ENDPOINT, 
