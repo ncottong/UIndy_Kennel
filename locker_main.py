@@ -82,9 +82,9 @@ def _env_flag(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-LIGHT_ACTIVE_LOW         = _env_flag("LOCKER_LIGHT_ACTIVE_LOW", True)
-LATCH_ACTIVE_LOW         = _env_flag("LOCKER_LATCH_ACTIVE_LOW", True)
-SENSOR_CLOSED_ACTIVE_LOW = _env_flag("LOCKER_SENSOR_CLOSED_ACTIVE_LOW", True)
+LIGHT_ACTIVE_LOW         = _env_flag("LOCKER_LIGHT_ACTIVE_LOW", False)
+LATCH_ACTIVE_LOW         = _env_flag("LOCKER_LATCH_ACTIVE_LOW", False)
+SENSOR_CLOSED_ACTIVE_LOW = _env_flag("LOCKER_SENSOR_CLOSED_ACTIVE_LOW", False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -92,16 +92,19 @@ SENSOR_CLOSED_ACTIVE_LOW = _env_flag("LOCKER_SENSOR_CLOSED_ACTIVE_LOW", True)
 # ─────────────────────────────────────────────────────────────────────────────
 def _build_hardware_dict() -> dict:
     hw = {}
-    board_bus     = {0: 1,    1: 2,    2: 3}
-    board_address = {0: 0x20, 1: 0x21, 2: 0x22}
+    # Pi 3B has one hardware I2C bus (bus 1).  All three CH423 boards share
+    # that bus and are differentiated by their hardware-strapped I2C address.
+    board_bus     = {0: 1,    1: 1,    2: 1}       # all on bus 1
+    board_address = {0: 0x20, 1: 0x21, 2: 0x22}    # ADDR[1:0] strapping
     for board_idx in range(3):
         for slot in range(8):
             n = board_idx * 8 + slot + 1
             hw[f"Locker {n}"] = {
                 "Bus":        board_bus[board_idx],
                 "Address":    board_address[board_idx],
-                "Light Pin":  f"eGPO{slot * 2}",
-                "Latch Pin":  f"eGPO{slot * 2 + 1}",
+                # Even GPO pins → latches,  odd GPO pins → lights
+                "Latch Pin":  f"eGPO{slot * 2}",
+                "Light Pin":  f"eGPO{slot * 2 + 1}",
                 "Sensor Pin": f"eGPIO{slot}",
             }
     return hw
@@ -113,7 +116,7 @@ LOCKER_HARDWARE: dict = _build_hardware_dict()
 # CH423 BOARD WRAPPER
 # ─────────────────────────────────────────────────────────────────────────────
 class CH423Board(df_module.DFRobot_CH423):
-    def __init__(self, bus_num: int):
+    def __init__(self, bus_num: int, address: int):
         self._args      = 0
         self._mode      = [0] * 8
         self._cbs       = [0] * 8
@@ -121,6 +124,9 @@ class CH423Board(df_module.DFRobot_CH423):
         self._gpo0_7    = 0
         self._gpo8_15   = 0
         self._bus_num   = bus_num
+        # Both attribute names used across DFRobot library versions:
+        self._addr      = address
+        self.I2C_ADDR   = address
         self._bus       = smbus.SMBus(bus_num)
 
 def _pin_int(name: str) -> int:
@@ -231,22 +237,31 @@ def get_board(locker_id: str) -> "CH423Board | None":
     hw = LOCKER_HARDWARE.get(locker_id)
     if hw is None:
         return None
-    bus_num = hw["Bus"]
+    bus_num   = hw["Bus"]
+    address   = hw["Address"]
+    board_key = (bus_num, address)          # unique per physical board
     with _boards_lock:
-        if bus_num not in _boards:
-            print(f"[HW] Initializing CH423 on I2C bus {bus_num} for {locker_id}...")
+        if board_key not in _boards:
+            print(f"[HW] Initializing CH423 on I2C bus {bus_num} "
+                  f"addr 0x{address:02X} for {locker_id}...")
             try:
-                board = CH423Board(bus_num)
+                board = CH423Board(bus_num, address)
                 board.begin(
                     gpio_mode=df_module.DFRobot_CH423.eINPUT,
                     gpo_mode=df_module.DFRobot_CH423.ePUSH_PULL,
                 )
-                _boards[bus_num] = board
-                print(f"[HW] CH423 bus {bus_num} ready")
+                # Drive all 16 GPO pins LOW and configure all 8 GPIO pins as
+                # inputs before any locker state is applied.  This prevents
+                # latches from firing on power-up due to undefined pin state.
+                for i in range(16):
+                    board.gpo_digital_write(_pin_int(f"eGPO{i}"), 0)
+                _boards[board_key] = board
+                print(f"[HW] CH423 bus {bus_num} addr 0x{address:02X} ready")
             except Exception as exc:
-                print(f"[HW] Failed to init CH423 bus {bus_num}: {exc}")
+                print(f"[HW] Failed to init CH423 bus {bus_num} "
+                      f"addr 0x{address:02X}: {exc}")
                 return None
-        return _boards[bus_num]
+        return _boards[board_key]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -308,6 +323,28 @@ def apply_hardware_state(locker_id: str):
     else:
         lock_locker(locker_id)
     _set_light(locker_id, occupied or admin_unlocked)
+
+def initialize_hardware_state(locker_id: str):
+    """
+    Startup-only alternative to apply_hardware_state().
+    Latches are ALWAYS driven LOW (locked) regardless of any Admin Unlocked
+    flag left in the database from a previous session.  Lights reflect the
+    current occupancy so a locker that was assigned before the Pi rebooted
+    still shows its indicator.
+    """
+    with locker_status_lock:
+        status   = locker_status_dict.get(locker_id, {})
+        active   = status.get("Active", False)
+        occupied = status.get("Occupied", False)
+        # Clear any stale Admin Unlocked state — it must be re-sent by the
+        # dashboard after boot, not blindly re-activated from the DB.
+        status["Admin Unlocked"] = False
+    if not active:
+        _set_light(locker_id, False)
+        lock_locker(locker_id)
+        return
+    lock_locker(locker_id)             # always start locked
+    _set_light(locker_id, occupied)    # light on only if locker is in use
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1068,7 +1105,7 @@ def main():
         active_lids = [lid for lid, s in locker_status_dict.items() if s.get("Active")]
     for lid in active_lids:
         get_board(lid)
-        apply_hardware_state(lid)
+        initialize_hardware_state(lid)   # latches always LOW on boot
         with locker_status_lock:
             if not locker_status_dict[lid].get("Door Shut", True):
                 with open_door_lock:
